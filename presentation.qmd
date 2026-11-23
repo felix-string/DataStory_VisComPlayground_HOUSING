@@ -1,32 +1,585 @@
 ---
-title: "Data Story Example Slides"
-format: revealjs
+title: "Student Housing Pressure in Germany"
+subtitle: "How changing rental markets affect students across university cities"
+author:
+  - "Felix Sandile Thwala"
+  - "Sibahle Mabhuda"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+    incremental: false
+    footer: "Visual Communication and Data Storytelling"
+    width: 1600
+    height: 900
+execute:
+  echo: false
+  warning: false
+  message: false
+engine: knitr
 ---
 
-## Slide-deck for your presentation
-
-::: {.incremental}
-- This is an exmple file for a slide-deck of a data story in a *narrative structure*. 
-    - See *Effective Data Storytelling*, Brent Dykes (2020), Figure 4.3.
-- **Narrative structure** means, that the slide-deck can be used to tell a story in a **linear way** in front of an audience while going through the slides.  
-- This slidedeck is made with quarto revealjs. Documentation: [Quarto > Presentations > Revealjs](https://quarto.org/docs/presentations/revealjs/)
-- It is written a bit similar to a report. Each `## Headline` becomes a slide title and defines a slide. You just use less text, more often in lists, and more visuals. 
-- You can go interactive easily because it is HTML. 
-:::
-
-
-## Visuals
-
 ```{r}
-#| echo: false # This shows no code
+#| label: setup
+#| include: false
 
 library(tidyverse)
-``` 
+library(readxl)
+library(scales)
+library(ggrepel)
 
+# Consistent colours
+orange <- "#E8672C"
+blue   <- "#1769AA"
+green  <- "#2D8C63"
+grey   <- "#C7CED4"
 
+# Check that the files exist
+price_file <- "data/City_metrics_public_10-2026.xlsx"
+index_file <- "data/City_Metrics_rents_sales-Mietpreis-Transaktionspreisindex.xlsx"
+e8_file    <- "data/E8_topic_E__Housing_situation.xlsx"
 
-## More visuals
+stopifnot(file.exists(price_file))
+stopifnot(file.exists(index_file))
+stopifnot(file.exists(e8_file))
+
+# Read the datasets
+rent_prices <- read_excel(price_file)
+rent_index  <- read_excel(index_file)
+e8_housing  <- read_excel(
+  e8_file,
+  sheet = "housing_form_aggregated_all",
+  skip = 3
+)
+
+selected_cities <- c(
+  "Berlin", "Bonn", "Bremen", "Dresden",
+  "Frankfurt am Main", "Hamburg", "Köln",
+  "Leipzig", "München", "Münster"
+)
+
+# Use complete annual, nominal observations only
+annual_rents <- rent_prices |>
+  filter(
+    City %in% selected_cities,
+    is.na(Quarter),
+    is.na(Month),
+    Inflation_adjusted == 0,
+    Year >= 2015,
+    Year <= 2025
+  )
+```
+
+## A university choice is also a housing choice
+
+A student choosing where to study does not enter one German rental market.
+
+The student enters a **specific city market**, with its own rent level and rate of change.
+
+::: {.fragment}
+### The same housing budget can provide very different options across university cities.
+:::
+
+::: notes
+This is the setting of the story. Students study within the same national higher-education system, but local rental conditions differ strongly.
+:::
+
+## The question behind our story
+
+### How is student housing pressure changing across selected German university cities?
+
+We follow three questions:
+
+1. How large is the current asking-rent gap?
+2. Which lower-cost cities are becoming expensive quickly?
+3. How many students have access to dedicated student accommodation?
+
+::: notes
+We use the term housing pressure because complete affordability requires city-level student income and total housing-cost data, which are not available in these datasets.
+:::
+
+## Two datasets reveal two sides of the problem
+
+::: columns
+::: {.column width="48%"}
+### GREIX
+
+- Median asking rent per square metre
+- City-level rent growth
+- Nominal and inflation-adjusted indices
+- Main comparison: 2015 to 2025
+:::
+
+::: {.column width="48%"}
+### EUROSTUDENT 8
+
+- Student housing arrangements
+- Living with parents
+- Dedicated student accommodation
+- Living alone or with others
+:::
+:::
+
+::: {.callout-note}
+GREIX describes local rental markets. EUROSTUDENT provides the student-specific context. The datasets are interpreted together, but they are not merged row by row.
+:::
+
+## Method: level, change and exposure
+
+::: columns
+::: {.column width="32%"}
+### Current level
+Median asking rent in 2025
+:::
+
+::: {.column width="32%"}
+### Change
+Percentage growth from 2015 to 2025
+:::
+
+::: {.column width="32%"}
+### Student exposure
+Housing arrangements in Germany
+:::
+:::
+
+We use annual observations and keep nominal and inflation-adjusted values separate.
+
+## The first warning sign is a large city gap
 
 ```{r}
+#| label: fig-current-rents
+#| fig-width: 11
+#| fig-height: 5.3
+#| out-width: "95%"
 
+rent_2025 <- annual_rents |>
+  filter(Year == 2025) |>
+  arrange(MED_PRICE_SQM) |>
+  mutate(
+    highlight = case_when(
+      City == "München" ~ "Highest",
+      City == "Dresden" ~ "Lowest",
+      TRUE ~ "Other"
+    )
+  )
+
+rent_gap <- max(rent_2025$MED_PRICE_SQM, na.rm = TRUE) -
+  min(rent_2025$MED_PRICE_SQM, na.rm = TRUE)
+
+ggplot(rent_2025,
+       aes(x = reorder(City, MED_PRICE_SQM),
+           y = MED_PRICE_SQM,
+           fill = highlight)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = paste0("€", number(MED_PRICE_SQM, accuracy = 0.01))),
+    hjust = -0.12,
+    size = 4
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "Highest" = orange,
+    "Lowest" = green,
+    "Other" = grey
+  )) +
+  scale_y_continuous(
+    limits = c(0, 25),
+    breaks = seq(0, 25, 5),
+    labels = label_number(prefix = "€")
+  ) +
+  labs(
+    title = paste0("A €", number(rent_gap, accuracy = 0.01),
+                   " gap separates the highest and lowest city"),
+    subtitle = "Median asking rent per square metre, 2025",
+    x = NULL,
+    y = "Median asking rent per m²",
+    caption = "Source: GREIX. Annual nominal asking rents."
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
 ```
+
+::: notes
+München has the highest median asking rent in the selected sample, while Dresden has the lowest. The gap establishes the unequal local markets students enter.
+:::
+
+## The same small apartment can imply a very different monthly rent
+
+```{r}
+#| label: monthly-example
+#| include: false
+munich_rate <- rent_2025 |> filter(City == "München") |> pull(MED_PRICE_SQM)
+dresden_rate <- rent_2025 |> filter(City == "Dresden") |> pull(MED_PRICE_SQM)
+munich_30 <- munich_rate * 30
+dresden_30 <- dresden_rate * 30
+monthly_gap <- munich_30 - dresden_30
+```
+
+::: columns
+::: {.column width="47%"}
+### München
+
+# `r paste0("€", scales::number(munich_30, accuracy = 1))`
+
+Illustrative monthly base asking rent for 30 m²
+:::
+
+::: {.column width="47%"}
+### Dresden
+
+# `r paste0("€", scales::number(dresden_30, accuracy = 1))`
+
+Illustrative monthly base asking rent for 30 m²
+:::
+:::
+
+::: {.callout-important}
+The illustrative monthly difference is approximately **`r paste0("€", scales::number(monthly_gap, accuracy = 1))`** before utilities and other costs.
+:::
+
+## But the current price is only half the story
+
+A lower-cost city may appear affordable today while moving quickly towards a higher-cost market.
+
+### Which cities experienced the fastest rent growth?
+
+## Some lower-cost cities are catching up quickly
+
+```{r}
+#| label: fig-growth
+#| fig-width: 11
+#| fig-height: 5.3
+#| out-width: "95%"
+
+growth_data <- annual_rents |>
+  filter(Year %in% c(2015, 2025)) |>
+  select(City, Year, MED_PRICE_SQM) |>
+  pivot_wider(
+    names_from = Year,
+    values_from = MED_PRICE_SQM,
+    names_prefix = "rent_"
+  ) |>
+  drop_na(rent_2015, rent_2025) |>
+  mutate(
+    growth = 100 * (rent_2025 - rent_2015) / rent_2015,
+    highlight = case_when(
+      City == "Berlin" ~ "Fastest",
+      City == "Leipzig" ~ "Lower-cost growth",
+      City == "Dresden" ~ "Slower growth",
+      TRUE ~ "Other"
+    )
+  ) |>
+  arrange(growth)
+
+ggplot(growth_data,
+       aes(x = reorder(City, growth),
+           y = growth,
+           fill = highlight)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = paste0(round(growth), "%")),
+    hjust = -0.15,
+    size = 4
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "Fastest" = orange,
+    "Lower-cost growth" = "#F4A261",
+    "Slower growth" = green,
+    "Other" = grey
+  )) +
+  scale_y_continuous(
+    limits = c(0, max(growth_data$growth) * 1.15),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    title = "Lower-cost did not always mean slow-growing",
+    subtitle = "Change in median asking rent, 2015 to 2025",
+    x = NULL,
+    y = "Growth",
+    caption = "Source: GREIX. Annual nominal asking rents."
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+::: notes
+Berlin recorded the fastest growth. Leipzig matters because it began as a lower-cost city but experienced strong growth. Dresden shows that the pattern is not uniform.
+:::
+
+## The affordability map is shifting, but not uniformly
+
+```{r}
+#| label: fig-relationship
+#| fig-width: 10.5
+#| fig-height: 5.5
+#| out-width: "92%"
+
+median_start <- median(growth_data$rent_2015, na.rm = TRUE)
+median_growth <- median(growth_data$growth, na.rm = TRUE)
+
+relationship_data <- growth_data |>
+  mutate(
+    group = case_when(
+      rent_2015 < median_start & growth > median_growth ~
+        "Lower start, faster growth",
+      City == "Dresden" ~
+        "Lower start, slower growth",
+      TRUE ~ "Other cities"
+    )
+  )
+
+ggplot(relationship_data,
+       aes(x = rent_2015,
+           y = growth,
+           label = City,
+           colour = group)) +
+  geom_vline(xintercept = median_start,
+             linetype = "dashed", colour = "grey60") +
+  geom_hline(yintercept = median_growth,
+             linetype = "dashed", colour = "grey60") +
+  geom_point(size = 4.5) +
+  geom_text_repel(size = 4, box.padding = 0.5,
+                  max.overlaps = Inf, show.legend = FALSE) +
+  scale_colour_manual(values = c(
+    "Lower start, faster growth" = orange,
+    "Lower start, slower growth" = green,
+    "Other cities" = blue
+  )) +
+  scale_x_continuous(labels = label_number(prefix = "€")) +
+  scale_y_continuous(labels = label_percent(scale = 1)) +
+  labs(
+    title = "Previously cheaper cities followed different paths",
+    subtitle = "Starting asking rent in 2015 compared with growth to 2025",
+    x = "Median asking rent in 2015 per m²",
+    y = "Growth from 2015 to 2025",
+    colour = NULL,
+    caption = "Source: GREIX."
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold")
+  )
+```
+
+::: notes
+Leipzig and Bremen combine lower starting rents with faster growth. Dresden began at a lower rent but followed a slower-growth path. Affordable alternatives are shifting rather than disappearing everywhere at the same rate.
+:::
+
+## Rental growth cannot be explained by general inflation alone
+
+```{r}
+#| label: fig-inflation
+#| fig-width: 10.5
+#| fig-height: 5.3
+#| out-width: "92%"
+
+# Accept either spelling of the GREIX aggregate
+inflation_data <- rent_index |>
+  filter(
+    str_to_lower(City) == "greix",
+    !is.na(Quarter)
+  ) |>
+  mutate(
+    time = Year + (Quarter - 1) / 4,
+    type = if_else(
+      Inflation_adjusted == 1,
+      "Inflation-adjusted index",
+      "Nominal index"
+    )
+  )
+
+ggplot(inflation_data,
+       aes(x = time, y = Rent_Index, colour = type)) +
+  geom_line(linewidth = 1.3) +
+  scale_colour_manual(values = c(
+    "Nominal index" = orange,
+    "Inflation-adjusted index" = blue
+  )) +
+  labs(
+    title = "Part of the rent increase remains after inflation",
+    subtitle = "GREIX quarterly rent index",
+    x = "Year",
+    y = "Rent index",
+    colour = NULL,
+    caption = "Source: GREIX rental and transaction price index."
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold")
+  )
+```
+
+::: notes
+The nominal line shows rent growth before inflation is removed. The inflation-adjusted line shows the remaining change. A rising real index indicates that rents increased faster than the general price level.
+:::
+
+## The climax: rising rents meet limited student housing
+
+The rental-market evidence creates the pressure.
+
+The student-housing evidence shows why the pressure matters.
+
+### How many students live in dedicated student accommodation?
+
+## Dedicated student accommodation reaches only a minority
+
+```{r}
+#| label: fig-student-housing
+#| fig-width: 10.5
+#| fig-height: 5.3
+#| out-width: "92%"
+
+student_housing <- e8_housing |>
+  filter(
+    FG == "all_students",
+    FGI == "all",
+    I == "accom_aggregated"
+  ) |>
+  transmute(
+    indicator = as.character(II),
+    percentage = as.numeric(DE)
+  ) |>
+  mutate(
+    housing_type = case_when(
+      indicator == "1" ~ "With parents",
+      indicator == "2" ~ "Student accommodation",
+      indicator == "3" ~ "With partner or children",
+      indicator == "4" ~ "With other people",
+      indicator == "5" ~ "Living alone",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  filter(!is.na(housing_type))
+
+# Convert proportions to percentages only when necessary
+if (max(student_housing$percentage, na.rm = TRUE) <= 1) {
+  student_housing <- student_housing |>
+    mutate(percentage = percentage * 100)
+}
+
+student_housing <- student_housing |>
+  mutate(
+    highlight = if_else(
+      housing_type == "Student accommodation",
+      "Student accommodation",
+      "Other arrangement"
+    )
+  )
+
+ggplot(student_housing,
+       aes(x = reorder(housing_type, percentage),
+           y = percentage,
+           fill = highlight)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = paste0(number(percentage, accuracy = 0.1), "%")),
+    hjust = -0.12,
+    size = 4
+  ) +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "Student accommodation" = orange,
+    "Other arrangement" = grey
+  )) +
+  scale_y_continuous(
+    limits = c(0, max(student_housing$percentage) * 1.2),
+    labels = label_percent(scale = 1)
+  ) +
+  labs(
+    title = "Dedicated student housing reaches only a minority",
+    subtitle = "Housing arrangements of students in Germany",
+    x = NULL,
+    y = "Students",
+    caption = "Source: EUROSTUDENT 8, Topic E."
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.y = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+::: notes
+Dedicated student accommodation houses only a minority of students. Students outside student accommodation are not automatically private renters because some live with parents or partners. The point is that student-specific accommodation has limited reach.
+:::
+
+## Two pressures now meet
+
+::: columns
+::: {.column width="48%"}
+### Local market pressure
+
+- Large rental gaps between cities
+- Rapid growth in some cheaper markets
+- Increases partly remain after inflation
+:::
+
+::: {.column width="48%"}
+### Limited student-specific coverage
+
+- Dedicated accommodation reaches a minority
+- Many students use other arrangements
+- Exposure differs across student groups
+:::
+:::
+
+::: {.callout-important}
+Students face unequal and changing local rental markets while dedicated student accommodation has limited reach.
+:::
+
+## What the evidence means
+
+1. **Location matters:** the same budget provides different housing options.
+2. **Timing matters:** a lower-cost city can become expensive quickly.
+3. **Housing type matters:** dedicated accommodation can reduce exposure to the wider market.
+4. **The pattern is uneven:** Leipzig and Bremen show pressure, while Dresden remains an important exception.
+
+## What the evidence cannot yet tell us
+
+- Student income by city
+- The share of income spent on rent
+- Final contracted rent
+- Utilities and total housing expenses
+- Student-residence prices by city
+- Why students choose specific housing arrangements
+
+::: {.callout-note}
+The project measures **student housing pressure**, not a complete city-level affordability ratio.
+:::
+
+## The map of lower-cost university cities is shifting
+
+::: {.callout-tip}
+### Main insight
+
+**Students enter sharply different private rental markets, and rapid rent growth in some previously cheaper cities means that lower-cost alternatives are becoming less secure.**
+:::
+
+Dedicated student accommodation reaches only a minority, making wider rental-market conditions important to the student housing story.
+
+## A better response requires better local evidence
+
+- Expand dedicated student accommodation where rent growth and student demand are both high.
+- Publish city-level student rent and income indicators.
+- Monitor formerly cheaper university cities before affordability declines further.
+- Keep student housing policy connected to wider rental-market policy.
+
+## Thank you
+
+### Questions and feedback
+
+**Felix Sandile Thwala and Sibahle Mabhuda**

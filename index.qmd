@@ -1,5 +1,6 @@
 ---
-title: "Report"
+title: "Student Housing Affordability Gap in Germany"
+subtitle: "A Visual Data Story"
 authors: "Felix Sandile Thwala & Sibahle Mabhuda"
 format: html
 bibliography: Visual Communication and Data Storytelling.json
@@ -8,126 +9,372 @@ bibliography: Visual Communication and Data Storytelling.json
 [Slide-deck of the data story](presentation.qmd)
 
 ```{r}
-#| label: packages
+#| label: setup
 #| message: false
+#| warning: false
 
-# These are the packages used in the report
+# Load libraries
 library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggplot2)
+library(giscoR)
+library(sf)
+library(ggrepel)
+
+# 1. Load and prepare GREIX data
+greix_data <- read_excel(
+  "data/City_Metrics_rents_sales-Mietpreis-Transaktionspreisindex.xlsx"
+)
+
+# 2. Load E8 data
+e8_agg <- read_excel(
+  "data/E8_topic_E__Housing_situation.xlsx",
+  sheet = "housing_form_aggregated_all",
+  skip = 3
+)
+
+# 3. Create DE context
+de_context_wide <- e8_agg |>
+  filter(FG == "all_students", FGI == "all", I == "accom_aggregated") |>
+  select(indicator_item = II, DE) |>
+  mutate(country_iso2 = "DE", DE = as.numeric(DE)) |>
+  pivot_wider(
+    names_from = indicator_item,
+    values_from = DE,
+    names_prefix = "de_share_"
+  ) |>
+  rename(
+    de_share_parents = de_share_1,
+    de_share_student_accom = de_share_2,
+    de_share_partner_children = de_share_3,
+    de_share_other_persons = de_share_4,
+    de_share_alone = de_share_5
+  )
+
+# 4. Merge
+merged_data <- greix_data |>
+  mutate(country_iso2 = "DE") |>
+  left_join(de_context_wide, by = "country_iso2")
+
+# 5. Create continuous time variable
+plot_data <- merged_data |>
+  mutate(Time = Year + (Quarter - 1) / 4)
+
 ```
 
+1. Introduction
+Our central question: How is the student housing affordability gap changing across German university cities?
 
-## Outline
+Students searching for accommodation compete within the wider private rental market. Because the same student budget does not provide the same housing options everywhere, this report investigates the differences in asking rents across selected German university cities using GREIX rental market data. We examine whether previously affordable cities are experiencing faster rental growth and how this exposes students to structural vulnerabilities.
 
-### Our central question
+2. Analysis
+To answer our central question, we break the analysis down into five specific sub-questions, using different visualisations to build the story. 
 
-#### How is the student housing affordability gap changing across German university cities?
-
-### Rationale
-
-Students searching for accommodation compete within the wider private rental market. The same student budget does not provide the same housing options in every university city.
-
-### Our data
-
-- GREIX rental market data
-- Selected German university cities
-- Main period: 2015 to 2025
-- Main measure: median asking rent per square metre
-- Nominal and inflation-adjusted observations
-
-### München remains expensive, but it is not alone
-
-Current asking rents show a substantial difference between German university cities.
-
-#### Some cheaper cities are catching up quickly
-
-Rental growth in cities such as Leipzig and Bremen suggests that housing pressure is spreading beyond traditionally expensive markets.
-
-### The affordability map is shifting
-
-Cities that started with lower rents did not all follow the same path.
-
-Some experienced rapid growth, while others remained comparatively affordable.
-
-### Who needs this story?
-
-- Prospective international students
-- Current university students
-- University student-support employees
-- Municipal housing policymakers
-
-### Data limitation
-
-The data represent asking rents in the wider private rental market, not student-only rents.
-
-### Next steps
-- We are discussing this mmmmh yeah,
-- Compare nominal and inflation-adjusted growth
-- Improve annotations and slide headlines
-
-### Students enter very different rental markets
-
-Although München remains the most expensive city in the selected sample, rapid asking-rent growth in previously cheaper cities shows that Germany's map of affordable university housing alternatives is shifting.
+3.1. Q1: How affordable are German university cities currently?
+This first chart establishes the baseline by comparing the average rent index in the most recent year across all cities.
 
 ```{r}
-#| label: fig-visual1
-#| fig-cap: "*TBA.*"
-#| warning: false # Use this only when you checked that it is OK. It is not a good default for every figure cell.
- 
+#| label: fig-q1
+#| echo: false
+#| fig-cap: "Current Affordability Gap: Average Rent Index by City."
+
+latest_year <- max(plot_data$Year, na.rm = TRUE)
+
+bar_data <- plot_data |>
+  filter(Year == latest_year) |>
+  group_by(City) |>
+  summarize(Avg_Rent_Index = mean(Rent_Index, na.rm = TRUE)) |>
+  arrange(Avg_Rent_Index)
+
+ggplot(
+  bar_data,
+  aes(
+    x = reorder(City, Avg_Rent_Index),
+    y = Avg_Rent_Index,
+    fill = Avg_Rent_Index
+  )
+) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option = "magma", direction = -1) + 
+  theme_minimal() +
+  labs(x = "City", y = "Average Rent Index", fill = "Index") +
+  theme(legend.position = "none")
 
 ```
 
-Label your Figures using `label: fig-something`, then you can create cross references like @fig-visual1. It is a standard practice in research articles to refer to Figures in this way. For example: @fig-visual2 shows the life expectancy for the countries with a population larger than more than 20 million. 
 
-*Refer here to*
+As seen in @fig-q1, cities like Berlin, Leipzig, and Potsdam currently command the highest rent indices, while cities like Erfurt and Dresden remain relatively affordable.
 
-- *Additional visualizations and analysis below*
-- *Accompnaying Dashboards*
-- *...*
-
-## Additional insights
-
-*Better give a more substantial title.*
+3.2. Q2: Which cities are experiencing the fastest rental growth?
+We then look at the change in rent over time to see where housing pressure is intensifying most rapidly.
 
 ```{r}
-#| label: fig-visual2
-#| fig-height: 7
-#| fig-cap: "*This is just a placeholder.*"
+#| label: fig-q2
+#| echo: false
+#| fig-cap: "Rental Growth: Absolute change in Rent Index over time."
+
+growth_data <- plot_data |>
+  group_by(City) |>
+  summarize(
+    start_rent = mean(
+      Rent_Index[
+        Year == min(
+          Year, na.rm = TRUE)], 
+          na.rm = TRUE),
+    end_rent = mean(Rent_Index[Year == max(Year, na.rm = TRUE)], na.rm = TRUE)
+  ) |>
+  mutate(rent_change = end_rent - start_rent) |>
+  arrange(rent_change)
+
+ggplot(
+  growth_data,
+  aes(x = reorder(City, rent_change), y = rent_change, fill = rent_change)
+) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option = "plasma", direction = -1) + 
+  theme_minimal() +
+  labs(x = "City", y = "Change in Rent Index", fill = "Increase") +
+  theme(legend.position = "none")
 
 ```
 
-### You may have subsections here or elsewhere
+@fig-q2 reveals that cities like Berlin, Leipzig, and Potsdam are not only the most expensive but also experienced the fastest absolute growth. This suggests that previously "cheaper" alternatives are rapidly catching up, leaving students with fewer affordable options.
 
-### However, subsections usually make sense when there is more than one
+### 3.2.5. Q2.5: The Spatial Distribution of Affordability
+To make the affordability gap geographically intuitive, we map the current rent index and rent growth across German university cities.
 
-## Conclusion
+```{r}
+#| label: fig-q2-5
+#| echo: false
+#| message: false
+#| fig-cap: "Spatial Map: Rent Index and Growth by City."
 
-*Topics like: What have we learned? How does it fit in or help in broader contexts? Any actions recommended? What remains open? What are next steps? Which of these questions are most relevant depends on the type of your project.*
+# 1. Get Germany map outline
+germany_map <- gisco_get_countries(country = "Germany", resolution = "3")
 
-## Interactive Visualization / Data Dashboard {.appendix}
+# 2. Create a reference table for the cities in your dataset
+city_coords <- tribble(
+  ~City, ~lon, ~lat,
+  "Berlin", 13.4050, 52.5200,
+  "Bonn", 7.0982, 50.7374,
+  "Dortmund", 7.4653, 51.5136,
+  "Dresden", 13.7373, 51.0504,
+  "Düsseldorf", 6.7735, 51.2277,
+  "Erfurt", 11.0299, 50.9848,
+  "Frankfurt am Main", 8.6821, 50.1109,
+  "Hamburg", 9.9937, 53.5511,
+  "Karlsruhe", 8.4037, 49.0069,
+  "Köln", 6.9603, 50.9375,
+  "Leipzig", 12.3731, 51.3397,
+  "Lübeck", 10.6866, 53.8655,
+  "München", 11.5820, 48.1351,
+  "Münster", 7.6261, 51.9607,
+  "Potsdam", 13.0645, 52.3906,
+  "Stuttgart", 9.1829, 48.7758,
+  "Wiesbaden", 8.2473, 50.0782
+)
 
-*Either have this here or on another webpage (new quarto file).*
+# 3. Join coordinates with the latest rent data
+map_data <- bar_data |>
+  inner_join(city_coords, by = "City") |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
 
-*Interactive visualizations may also appear above.* 
+# 4. Plot the map
+ggplot() +
+  # Base map of Germany
+  geom_sf(
+    data = germany_map,
+    fill = "#E8F4EA",
+    color = "#A5C9A5",
+    linewidth = 0.5
+  ) +
+  # City markers (size based on current rent index)
+  geom_sf(
+    data = map_data,
+    aes(size = Avg_Rent_Index),
+    color = "#D32F2F",
+    alpha = 0.8
+  ) +
+  # Add city labels (using ggrepel to avoid overlapping)
+  geom_text_repel(
+    data = map_data,
+    aes(label = City, geometry = geometry),
+    stat = "sf_coordinates",
+    size = 3,
+    min.segment.length = 0,
+    box.padding = 0.5
+  ) +
+  scale_size_continuous(range = c(2, 8), name = "Rent Index") +
+  theme_void() +
+  theme(legend.position = "right")
 
-*The focus here is to provide the reader with sensible ways to explore the data independently. You have to think about what could be of interest.*
+```
 
+The map reveals that the highest rents (largest markers) are concentrated in major metropolitan areas like Berlin, Munich, and Frankfurt, while eastern cities like Leipzig and Dresden show smaller markers, visually confirming the spatial inequality of student housing affordability.
 
+3.3. Q3: How does inflation impact the real rental burden?
+High rents are exacerbated by general inflation. This chart compares nominal rent increases with inflation-adjusted (real) rents.
 
+```{r}
+#| label: fig-q3
+#| echo: false
+#| fig-cap: "Inflation Impact: Nominal vs. Inflation-Adjusted Rent Index."
 
-## Data Source {.appendix}
+inflation_trend <- plot_data |>
+  group_by(Time, Inflation_adjusted) |>
+  summarize(
+    Avg_Rent_Index = mean(Rent_Index, na.rm = TRUE), .groups = "drop"
+  ) |>
+  mutate(
+    Type = ifelse(
+      Inflation_adjusted == 1,
+      "Inflation Adjusted (Real)",
+      "Nominal"
+    )
+  )
 
-*If specific information and details about the data source would be too long in the "Outline" section, put it in an appendix section.* 
+ggplot(
+  inflation_trend,
+  aes(
+    x = Time,
+    y = Avg_Rent_Index,
+    color = Type,
+    linetype = Type
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  scale_color_manual(
+    values = c(
+      "Nominal" = "firebrick",
+      "Inflation Adjusted (Real)" = "steelblue"
+    )
+  ) +
+  theme_minimal() +
+  labs(
+    x = "Year",
+    y = "Average Rent Index",
+    color = "Metric",
+    linetype = "Metric"
+  )
 
-## Other appendix sections {.appendix}
+```
 
-*Do the same with other text which distracts the reading of the main text.*
+As @fig-q3 demonstrates, the real cost of housing is outpacing general inflation, meaning students' purchasing power is being eroded significantly.
 
-## References {.unnumbered .appendix}
+3.4. Q4: How exposed are students to the private rental market?
+To understand who is affected by these rent hikes, we analyze the E8 dataset to see where German students actually live.
 
-*This is compiled automatically from all citations. Here, just one reference was cited. It has been cited in the text as `@Dykes2019EffectiveDataStorytelling`, and this cite-key refers to the cite-keys in the Zotero Group <https://www.zotero.org/groups/6686224/visual_communication_and_data_storytelling/library> which the instructor compiled.*
+```{r}
+#| label: fig-q4
+#| echo: false
+#| fig-cap: "Student Housing Exposure in Germany (National E8 Data)."
 
+e8_plot_data <- de_context_wide |>
+  select(-country_iso2) |>
+  pivot_longer(cols = everything(), names_to = "Housing_Type", values_to = "Percentage") |>
+  mutate(
+    Housing_Type = case_when(
+      Housing_Type == "de_share_parents" ~ "With Parents",
+      Housing_Type == "de_share_student_accom" ~ "Student Accommodation",
+      Housing_Type == "de_share_partner_children" ~ "With Partner/Children",
+      Housing_Type == "de_share_other_persons" ~ "With Others (Friends, etc.)",
+      Housing_Type == "de_share_alone" ~ "Living Alone"
+    )
+  )
 
----
+ggplot(e8_plot_data, aes(x = "Germany", y = Percentage, fill = Housing_Type)) +
+  geom_col(width = 0.4) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal() +
+  labs(x = "", y = "Percentage of Students (%)", fill = "Housing Type") +
+  theme(legend.position = "bottom")
 
+```
+
+@fig-q4 highlights a critical vulnerability: only a small fraction of students (around 13%) are protected by student accommodation. The vast majority are forced into the private rental market.
+
+3.5. Q5: Which student demographics are most vulnerable?
+Finally, we break down housing arrangements by age group to see how vulnerability changes as students progress through their studies.
+
+```{r}
+#| label: fig-q5
+#| echo: false
+#| fig-cap: "Housing Vulnerability by Age Group."
+
+e8_age_data <- e8_agg |>
+  filter(FG == "e_age", I == "accom_aggregated") |>
+  select(Age_Group = FGI, Indicator = II, DE) |>
+  mutate(DE = as.numeric(DE)) |>
+  filter(Indicator %in% c("1", "2", "5")) |>
+  mutate(
+    Housing = case_when(
+      Indicator == "1" ~ "With Parents",
+      Indicator == "2" ~ "With Partner/Spouse",
+      Indicator == "5" ~ "Living Alone"
+    )
+  )
+
+ggplot(e8_age_data, aes(x = Age_Group, y = DE, fill = Housing)) +
+  geom_col(position = "dodge") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal() +
+  labs(x = "Age Group", y = "Percentage (%)", fill = "Living Arrangement") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+@fig-q5 shows that while younger students (<22) often live with parents, students aged 22-29 are overwhelmingly pushed into the private market (living alone or with partners). These older students are hit hardest by soaring rents.
+
+4. Discussion
+
+The Widening Affordability Gap
+Our analysis reveals a compounding crisis in German student housing. While cities like Berlin already command the highest rent indices (@fig-q1), the fastest rental growth is occurring in cities that students have historically relied upon for affordability (@fig-q2).
+
+Crucially, our inflation-adjusted analysis (@fig-q3) shows that the real cost of renting is outpacing general inflation, meaning students' purchasing power is being eroded significantly. The visual storytelling of the E8 dataset uncovers why this is devastating: only around 13% of students are protected by student accommodation (@fig-q4). Furthermore, as students grow older, they are pushed out of parental homes and into the exposed private market (@fig-q5).
+
+5. Conclusion
+The student housing affordability gap in Germany is not just a matter of high prices; it is a structural issue. As university cities become increasingly gentrified, students are left highly exposed to private market fluctuations with very little institutional housing to shield them. Policy interventions must address both the absolute lack of student housing and the rapid inflation of the private rental market.
+
+6. Data Source {.appendix}
+GREIX rental market data (City Metrics).
+
+Eurostudent E8 Topic E: Housing situation.
+
+7. References {.unnumbered .appendix}
 ::: {#refs}
 :::
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Merge the current rent data and the growth data
+quadrant_data <- growth_data |>
+  left_join(bar_data, by = "City")
+
+# Create the Quadrant Plot
+p_quadrant <- ggplot(quadrant_data, aes(x = Avg_Rent_Index, y = rent_change)) +
+  geom_point(color = "#D32F2F", size = 3, alpha = 0.8) +
+  geom_text(aes(label = City), vjust = -0.8, size = 3, check_overlap = TRUE) +
+  # Add crosshairs at the average values to create quadrants
+  geom_vline(xintercept = mean(quadrant_data$Avg_Rent_Index), linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = mean(quadrant_data$rent_change), linetype = "dashed", color = "gray50") +
+  theme_minimal() +
+  labs(
+    title = "The Affordability Gap: Rent Level vs. Rent Growth",
+    subtitle = "Top-Right: Expensive & Rising Fast | Bottom-Left: Affordable & Stable",
+    x = "Current Average Rent Index",
+    y = "Absolute Rent Growth Over Time"
+  )
+
+print(p_quadrant)
+
+```
+
+
+
